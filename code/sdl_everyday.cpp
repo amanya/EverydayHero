@@ -1,6 +1,9 @@
 #include "SDL3/SDL_error.h"
 #include "SDL3/SDL_events.h"
 #include "SDL3/SDL_init.h"
+#include "SDL3/SDL_joystick.h"
+#include "SDL3/SDL_keycode.h"
+#include "SDL3/SDL_oldnames.h"
 #include "SDL3/SDL_render.h"
 #include "SDL3/SDL_video.h"
 #include <SDL3/SDL.h>
@@ -24,6 +27,7 @@ struct sdl_window_dimension {
 
 static bool GlobalRunning;
 static sdl_offscreen_buffer GlobalBackBuffer;
+static SDL_Joystick *GlobalJoystick;
 
 sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window) {
     sdl_window_dimension Result;
@@ -92,13 +96,39 @@ bool HandleEvent(SDL_Event *event) {
                 SDL_Renderer *Renderer = SDL_GetRenderer(Window);
                 DisplayBufferInWindow(Renderer);
             } break;
+        case SDL_EVENT_KEY_UP:
+        case SDL_EVENT_KEY_DOWN:
+            {
+                SDL_Log("SDL_EVENT_KEY_DOWN");
+                if (event->key.key == SDLK_ESCAPE) {
+                    should_quit = true;
+                }
+            } break;
+        case SDL_EVENT_JOYSTICK_ADDED:
+            {
+                SDL_Log("SDL_EVENT_JOYSTICK_ADDED");
+                if (GlobalJoystick == NULL) {
+                    GlobalJoystick = SDL_OpenJoystick(event->jdevice.which);
+                    if (!GlobalJoystick) {
+                        SDL_Log("Failed to open joystick ID %u: %s", (unsigned int) event->jdevice.which, SDL_GetError());
+                    }
+                }
+            } break;
+        case SDL_EVENT_JOYSTICK_REMOVED:
+            {
+                SDL_Log("SDL_EVENT_JOYSTICK_REMOVED");
+                if (GlobalJoystick && (SDL_GetJoystickID(GlobalJoystick) == event->jdevice.which)) {
+                    SDL_CloseJoystick(GlobalJoystick);
+                    GlobalJoystick = NULL;
+                }
+            } break;
     }
 
     return should_quit;
 }
 
 int main() {
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
@@ -132,11 +162,16 @@ int main() {
                 break;
             }
         }
+
+        if (GlobalJoystick) {
+            const float StickX = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTX)) / 32767.0f);
+            const float StickY = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTY)) / 32767.0f);
+            XOffset += StickX;
+            YOffset += StickY;
+        }
+
         RenderGradient(GlobalBackBuffer, XOffset, YOffset);
         DisplayBufferInWindow(Renderer);
-
-        ++XOffset;
-        YOffset += 2;
     }
 
     SDL_DestroyRenderer(Renderer);
