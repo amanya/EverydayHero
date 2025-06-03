@@ -2,56 +2,71 @@
 #include "SDL3/SDL_events.h"
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_render.h"
+#include "SDL3/SDL_video.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <cstdint>
 #include <stdlib.h>
 #include <sys/mman.h>
 
-static bool Running;
+struct sdl_offscreen_buffer {
+    // Pixels are always 32-bits wide, Memory order BB GG RR XX
+    void *Memory;
+    int Width;
+    int Height;
+    int Pitch;
+};
 
-static SDL_Texture *Texture;
-static void *Buffer;
-static int BufferWidth;
-static int BufferHeight;
-static int BytesPerPixel = 4;
+struct sdl_window_dimension {
+    int Width;
+    int Height;
+};
 
-static void RenderGradient(int BlueOffset, int GreenOffset) {
-    int Width = BufferWidth;
-    int Height = BufferHeight;
+static bool GlobalRunning;
+static sdl_offscreen_buffer GlobalBackBuffer;
 
-    int Pitch = Width * BytesPerPixel;
-    uint8_t *Row = (uint8_t *)Buffer;
-    for (int Y = 0; Y < BufferHeight; ++Y) {
+sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window) {
+    sdl_window_dimension Result;
+
+    SDL_GetWindowSize(Window, &Result.Width, &Result.Height);
+
+    return Result;
+}
+
+static void RenderGradient(sdl_offscreen_buffer Buffer, int BlueOffset, int GreenOffset) {
+    uint8_t *Row = (uint8_t *)Buffer.Memory;
+
+    for (int Y = 0; Y < Buffer.Height; ++Y) {
         uint32_t *Pixel = (uint32_t *)Row;
-        for(int X = 0; X < BufferWidth; ++X) {
+        for(int X = 0; X < Buffer.Width; ++X) {
             uint8_t Blue = (X + BlueOffset);
             uint8_t Green = (Y + GreenOffset);
 
             *Pixel++ = ((Green << 8) | Blue);
         }
-        Row += Pitch;
+        Row += Buffer.Pitch;
     }
 }
 
-static void UpdateWindow(SDL_Renderer *Renderer) {
+static void DisplayBufferInWindow(SDL_Renderer *Renderer) {
     SDL_RenderClear(Renderer);
-    SDL_UpdateTexture(Texture, NULL, Buffer, BufferWidth * BytesPerPixel);
+    SDL_Texture *Texture = SDL_CreateTexture(Renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, GlobalBackBuffer.Width, GlobalBackBuffer.Height);
+    SDL_UpdateTexture(Texture, NULL, GlobalBackBuffer.Memory, GlobalBackBuffer.Pitch);
     SDL_RenderTexture(Renderer, Texture, NULL, NULL);
     SDL_RenderPresent(Renderer);
 }
 
 static void ResizeTexture(SDL_Renderer *Renderer, int Width, int Height) {
-    if (Buffer) {
-        munmap(Buffer, BufferWidth * BufferHeight * BytesPerPixel);
+    int BytesPerPixel = 4;
+
+    GlobalBackBuffer.Pitch = Width * BytesPerPixel;
+
+    if (GlobalBackBuffer.Memory) {
+        munmap(GlobalBackBuffer.Memory, GlobalBackBuffer.Width * GlobalBackBuffer.Height * BytesPerPixel);
     }
-    if (Texture) {
-        SDL_DestroyTexture(Texture);
-    }
-    Texture = SDL_CreateTexture(Renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, Width, Height);
-    BufferWidth = Width;
-    BufferHeight = Height;
-    Buffer = mmap(0, Width * Height * BytesPerPixel, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    GlobalBackBuffer.Width = Width;
+    GlobalBackBuffer.Height = Height;
+    GlobalBackBuffer.Memory = mmap(0, Width * Height * BytesPerPixel, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }
 
 bool HandleEvent(SDL_Event *event) {
@@ -75,7 +90,7 @@ bool HandleEvent(SDL_Event *event) {
                 SDL_Log("SDL_EVENT_WINDOW_EXPOSED");
                 SDL_Window *Window = SDL_GetWindowFromID(event->window.windowID);
                 SDL_Renderer *Renderer = SDL_GetRenderer(Window);
-                UpdateWindow(Renderer);
+                DisplayBufferInWindow(Renderer);
             } break;
     }
 
@@ -83,16 +98,12 @@ bool HandleEvent(SDL_Event *event) {
 }
 
 int main() {
-    BufferWidth = 640;
-    BufferHeight = 480;
-
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
 
-    SDL_Window* Window = SDL_CreateWindow("Everyday Hero", 
-                                          BufferWidth, BufferHeight, SDL_WINDOW_RESIZABLE);
+    SDL_Window* Window = SDL_CreateWindow("Everyday Hero", 640, 480, SDL_WINDOW_RESIZABLE);
     if (!Window) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         return 1;
@@ -104,12 +115,13 @@ int main() {
         return 1;
     }
 
-    Running = true;
-    int Width, Height;
-    SDL_GetWindowSize(Window, &Width, &Height);
-    ResizeTexture(Renderer, Width, Height);
+    sdl_window_dimension WindowDimension = SDLGetWindowDimension(Window);
+
+    ResizeTexture(Renderer, WindowDimension.Width, WindowDimension.Height);
     int XOffset = 0;
     int YOffset = 0;
+
+    bool Running = true;
 
     while (Running) {
         SDL_Event event;
@@ -120,8 +132,8 @@ int main() {
                 break;
             }
         }
-        RenderGradient(XOffset, YOffset);
-        UpdateWindow(Renderer);
+        RenderGradient(GlobalBackBuffer, XOffset, YOffset);
+        DisplayBufferInWindow(Renderer);
 
         ++XOffset;
         YOffset += 2;
