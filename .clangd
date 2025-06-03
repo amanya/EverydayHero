@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: -I/opt/homebrew/Cellar/sdl3/3.2.14/include/
