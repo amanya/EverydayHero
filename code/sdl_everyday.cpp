@@ -281,6 +281,8 @@ int main() {
         bool Running = true;
 
         while (Running) {
+            uint64_t LastCounter = SDL_GetPerformanceCounter();
+
             SDL_Event event;
 
             while(SDL_PollEvent(&event)) {
@@ -328,6 +330,16 @@ int main() {
             }
 
             DisplayBufferInWindow(Renderer);
+
+            uint64_t PerfCountFrequency = SDL_GetPerformanceFrequency();
+            uint64_t EndCounter = SDL_GetPerformanceCounter();
+            uint64_t CounterElapsed = EndCounter - LastCounter;
+
+            float MSPerFrame = (((1000.0f * (float)CounterElapsed) / (float)PerfCountFrequency));
+            float FPS = (float)PerfCountFrequency / (float)CounterElapsed;
+
+            SDL_Log("%.02f ms/f, %.02ff/s\n", MSPerFrame, FPS);
+            LastCounter = EndCounter;
         }
 
         SDL_DestroyRenderer(Renderer);
