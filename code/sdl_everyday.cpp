@@ -248,98 +248,94 @@ int main() {
         return 1;
     }
 
-    SDL_Window* Window = SDL_CreateWindow("Everyday Hero", 640, 480, SDL_WINDOW_RESIZABLE);
-    if (!Window) {
-        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
-        return 1;
-    }
+    SDL_Window *Window;
+    SDL_Renderer *Renderer;
 
-    SDL_Renderer* Renderer = SDL_CreateRenderer(Window, NULL);
-    if (!Renderer) {
-        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
-        return 1;
-    }
+    if(SDL_CreateWindowAndRenderer("Everyday Hero", 640, 480, SDL_WINDOW_RESIZABLE, &Window, &Renderer)) {
+        sdl_window_dimension WindowDimension = SDLGetWindowDimension(Window);
 
-    sdl_window_dimension WindowDimension = SDLGetWindowDimension(Window);
+        ResizeTexture(Renderer, WindowDimension.Width, WindowDimension.Height);
+        int XOffset = 0;
+        int YOffset = 0;
 
-    ResizeTexture(Renderer, WindowDimension.Width, WindowDimension.Height);
-    int XOffset = 0;
-    int YOffset = 0;
+        // NOTE: Sound test
+        sdl_sound_output SoundOutput = {};
+        SoundOutput.SamplesPerSecond = 48000;
+        SoundOutput.ToneHz = 256;
+        SoundOutput.ToneVolume = 3000;
+        SoundOutput.RunningSampleIndex = 0;
+        SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
+        SoundOutput.BytesPerSample = sizeof(int16_t) * 2;
+        SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond * SoundOutput.BytesPerSample;
+        SoundOutput.tSine = 0.0f;
+        SoundOutput.LatencySampleCount = SoundOutput.SamplesPerSecond / 15;
+        // Open our audio device:
+        if(!SDLInitAudio(SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize)) {
+            SDL_Log("Audio initialization failed");
+            return 1;
+        }
+        SDLFillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
 
-    // NOTE: Sound test
-    sdl_sound_output SoundOutput = {};
-    SoundOutput.SamplesPerSecond = 48000;
-    SoundOutput.ToneHz = 256;
-    SoundOutput.ToneVolume = 3000;
-    SoundOutput.RunningSampleIndex = 0;
-    SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
-    SoundOutput.BytesPerSample = sizeof(int16_t) * 2;
-    SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond * SoundOutput.BytesPerSample;
-    SoundOutput.tSine = 0.0f;
-    SoundOutput.LatencySampleCount = SoundOutput.SamplesPerSecond / 15;
-    // Open our audio device:
-    if(!SDLInitAudio(SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize)) {
-        SDL_Log("Audio initialization failed");
-        return 1;
-    }
-    SDLFillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
+        bool SoundEnabled = false;
 
-    bool SoundEnabled = false;
+        bool Running = true;
 
-    bool Running = true;
+        while (Running) {
+            SDL_Event event;
 
-    while (Running) {
-        SDL_Event event;
-
-        while(SDL_PollEvent(&event)) {
-            if (HandleEvent(&event)) {
-                Running = false;
-                break;
+            while(SDL_PollEvent(&event)) {
+                if (HandleEvent(&event)) {
+                    Running = false;
+                    break;
+                }
             }
+
+            if (GlobalJoystick) {
+                const float StickX = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTX)) / 32767.0f);
+                const float StickY = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTY)) / 32767.0f);
+                XOffset += StickX;
+                YOffset += StickY;
+
+                SoundOutput.ToneHz = 512 + (int)(256.0f*(float)StickY);
+                SDL_Log("ToneHz: %d", SoundOutput.ToneHz);
+                SDL_Log("StickY: %f", StickY);
+                SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
+            }
+
+            RenderGradient(GlobalBackBuffer, XOffset, YOffset);
+
+            // Sound output test
+            int ByteToLock = (SoundOutput.RunningSampleIndex*SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
+            int TargetCursor = ((AudioRingBuffer.PlayCursor +
+                                 (SoundOutput.LatencySampleCount*SoundOutput.BytesPerSample)) %
+                                SoundOutput.SecondaryBufferSize);
+            int BytesToWrite;
+            if(ByteToLock > TargetCursor)
+            {
+                BytesToWrite = (SoundOutput.SecondaryBufferSize - ByteToLock);
+                BytesToWrite += TargetCursor;
+            }
+            else
+            {
+                BytesToWrite = TargetCursor - ByteToLock;
+            }
+
+            SDLFillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite); 
+
+            if (!SoundEnabled) {
+                SDL_ResumeAudioStreamDevice(GlobalStream);
+                SoundEnabled = true;
+            }
+
+            DisplayBufferInWindow(Renderer);
         }
 
-        if (GlobalJoystick) {
-            const float StickX = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTX)) / 32767.0f);
-            const float StickY = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTY)) / 32767.0f);
-            XOffset += StickX;
-            YOffset += StickY;
+        SDL_DestroyRenderer(Renderer);
+        SDL_DestroyWindow(Window);
 
-            SoundOutput.ToneHz = 512 + (int)(256.0f*(float)StickY);
-            SDL_Log("ToneHz: %d", SoundOutput.ToneHz);
-            SDL_Log("StickY: %f", StickY);
-            SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
-        }
-
-        RenderGradient(GlobalBackBuffer, XOffset, YOffset);
-
-        // Sound output test
-        int ByteToLock = (SoundOutput.RunningSampleIndex*SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
-        int TargetCursor = ((AudioRingBuffer.PlayCursor +
-                             (SoundOutput.LatencySampleCount*SoundOutput.BytesPerSample)) %
-                            SoundOutput.SecondaryBufferSize);
-        int BytesToWrite;
-        if(ByteToLock > TargetCursor)
-        {
-            BytesToWrite = (SoundOutput.SecondaryBufferSize - ByteToLock);
-            BytesToWrite += TargetCursor;
-        }
-        else
-        {
-            BytesToWrite = TargetCursor - ByteToLock;
-        }
-
-        SDLFillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite); 
-
-        if (!SoundEnabled) {
-            SDL_ResumeAudioStreamDevice(GlobalStream);
-            SoundEnabled = true;
-        }
-
-        DisplayBufferInWindow(Renderer);
+        SDL_Quit();
+    } else {
+        SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
     }
 
-    SDL_DestroyRenderer(Renderer);
-    SDL_DestroyWindow(Window);
-
-    SDL_Quit();
 }
