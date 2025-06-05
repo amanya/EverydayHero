@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <stdlib.h>
 #include <sys/mman.h>
-#include <math.h>
 
 #include "everyday.h"
 #include "everyday.cpp"
@@ -79,8 +78,9 @@ static void ResizeTexture(SDL_Renderer *Renderer, int Width, int Height) {
     GlobalBackBuffer.Memory = mmap(0, Width * Height * BytesPerPixel, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }
 
-static void SDLFillSoundBuffer(sdl_sound_output *SoundOutput, int ByteToLock, int BytesToWrite)
+static void SDLFillSoundBuffer(sdl_sound_output *SoundOutput, int ByteToLock, int BytesToWrite, game_sound_output_buffer *SoundBuffer)
 {
+    int16_t *Samples = SoundBuffer->Samples;
     void *Region1 = (uint8_t*)AudioRingBuffer.Data + ByteToLock;
     int Region1Size = BytesToWrite;
     if (Region1Size + ByteToLock > SoundOutput->SecondaryBufferSize)
@@ -95,13 +95,8 @@ static void SDLFillSoundBuffer(sdl_sound_output *SoundOutput, int ByteToLock, in
         SampleIndex < Region1SampleCount;
         ++SampleIndex)
     {
-        // TODO(casey): Draw this out for people
-        float SineValue = sinf(SoundOutput->tSine);
-        int16_t SampleValue = (int16_t)(SineValue * SoundOutput->ToneVolume);
-        *SampleOut++ = SampleValue;
-        *SampleOut++ = SampleValue;
-
-        SoundOutput->tSine += 2.0f*SDL_PI_F*1.0f/(float)SoundOutput->WavePeriod;
+        *SampleOut++ = *Samples++;
+        *SampleOut++ = *Samples++;
         ++SoundOutput->RunningSampleIndex;
     }
 
@@ -111,13 +106,8 @@ static void SDLFillSoundBuffer(sdl_sound_output *SoundOutput, int ByteToLock, in
         SampleIndex < Region2SampleCount;
         ++SampleIndex)
     {
-        // TODO(casey): Draw this out for people
-        float SineValue = sinf(SoundOutput->tSine);
-        int16_t SampleValue = (int16_t)(SineValue * SoundOutput->ToneVolume);
-        *SampleOut++ = SampleValue;
-        *SampleOut++ = SampleValue;
-
-        SoundOutput->tSine += 2.0f*SDL_PI_F*1.0f/(float)SoundOutput->WavePeriod;
+        *SampleOut++ = *Samples++;
+        *SampleOut++ = *Samples++;
         ++SoundOutput->RunningSampleIndex;
     }
 }
@@ -156,7 +146,7 @@ static bool SDLInitAudio(int32_t SamplesPerSecond, int32_t BufferSize) {
     AudioSettings.channels = 2;
 
     AudioRingBuffer.Size = BufferSize;
-    AudioRingBuffer.Data = malloc(BufferSize);
+    AudioRingBuffer.Data = calloc(BufferSize, 1);
     AudioRingBuffer.PlayCursor = AudioRingBuffer.WriteCursor = 0;
 
     GlobalStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &AudioSettings, &SDLAudioCallback, &AudioRingBuffer);
@@ -254,7 +244,7 @@ int main() {
             SDL_Log("Audio initialization failed");
             return 1;
         }
-        SDLFillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
+        int16_t *Samples = (int16_t *)calloc(SoundOutput.SamplesPerSecond, SoundOutput.BytesPerSample);
 
         bool SoundEnabled = false;
 
@@ -284,14 +274,6 @@ int main() {
                 SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
             }
 
-
-            game_offscreen_buffer Buffer = {};
-            Buffer.Memory = GlobalBackBuffer.Memory;
-            Buffer.Width = GlobalBackBuffer.Width; 
-            Buffer.Height = GlobalBackBuffer.Height;
-            Buffer.Pitch = GlobalBackBuffer.Pitch; 
-            GameUpdateAndRender(&Buffer, XOffset, YOffset);
-
             // Sound output test
             int ByteToLock = (SoundOutput.RunningSampleIndex*SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
             int TargetCursor = ((AudioRingBuffer.PlayCursor +
@@ -308,7 +290,19 @@ int main() {
                 BytesToWrite = TargetCursor - ByteToLock;
             }
 
-            SDLFillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite); 
+            game_sound_output_buffer SoundBuffer = {};
+            SoundBuffer.SamplesPerSecond = SoundOutput.SamplesPerSecond;
+            SoundBuffer.SampleCount = BytesToWrite / SoundOutput.BytesPerSample;
+            SoundBuffer.Samples = Samples;
+            
+            game_offscreen_buffer Buffer = {};
+            Buffer.Memory = GlobalBackBuffer.Memory;
+            Buffer.Width = GlobalBackBuffer.Width; 
+            Buffer.Height = GlobalBackBuffer.Height;
+            Buffer.Pitch = GlobalBackBuffer.Pitch; 
+            GameUpdateAndRender(&Buffer, XOffset, YOffset, &SoundBuffer, SoundOutput.ToneHz);
+
+            SDLFillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite, &SoundBuffer); 
 
             if (!SoundEnabled) {
                 SDL_ResumeAudioStreamDevice(GlobalStream);
