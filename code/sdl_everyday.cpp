@@ -1,6 +1,8 @@
 #include "SDL3/SDL_audio.h"
 #include "SDL3/SDL_error.h"
 #include "SDL3/SDL_events.h"
+#include "SDL3/SDL_gamepad.h"
+#include "SDL3/SDL_haptic.h"
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_joystick.h"
 #include "SDL3/SDL_keycode.h"
@@ -15,34 +17,13 @@
 
 #include "everyday.h"
 #include "everyday.cpp"
+#include "sdl_everyday.h"
 
-struct sdl_window_dimension {
-    int Width;
-    int Height;
-};
-
-struct sdl_audio_ring_buffer
-{
-    int Size;
-    int WriteCursor;
-    int PlayCursor;
-    void *Data;
-};
+#define MAX_CONTROLLERS 4
+SDL_Gamepad *ControllerHandles[MAX_CONTROLLERS];
+SDL_Haptic *RumbleHandles[MAX_CONTROLLERS];
 
 sdl_audio_ring_buffer AudioRingBuffer;
-
-struct sdl_sound_output
-{
-    int SamplesPerSecond;
-    int ToneHz;
-    int16_t ToneVolume;
-    uint32_t RunningSampleIndex;
-    int WavePeriod;
-    int BytesPerSample;
-    int SecondaryBufferSize;
-    float tSine;
-    int LatencySampleCount;
-};
 
 static bool GlobalRunning;
 static game_offscreen_buffer GlobalBackBuffer;
@@ -111,6 +92,16 @@ static void SDLFillSoundBuffer(sdl_sound_output *SoundOutput, int ByteToLock, in
         ++SoundOutput->RunningSampleIndex;
     }
 }
+
+static void SDLProcessGameControllerButton(game_button_state *OldState,
+                                           game_button_state *NewState,
+                                           SDL_Gamepad *ControllerHandle,
+                                           SDL_GamepadButton Button)
+{
+    NewState->EndedDown = SDL_GetGamepadButton(ControllerHandle, Button);
+    NewState->HalfTransitionCount += ((NewState->EndedDown == OldState->EndedDown)?0:1);
+}
+
 
 static void SDLAudioCallback(void *UserData, SDL_AudioStream *Stream, int AdditionalAmount, int TotalAmount)
 {
@@ -192,24 +183,67 @@ bool HandleEvent(SDL_Event *event) {
         case SDL_EVENT_JOYSTICK_ADDED:
             {
                 SDL_Log("SDL_EVENT_JOYSTICK_ADDED");
-                if (GlobalJoystick == NULL) {
-                    GlobalJoystick = SDL_OpenJoystick(event->jdevice.which);
-                    if (!GlobalJoystick) {
-                        SDL_Log("Failed to open joystick ID %u: %s", (unsigned int) event->jdevice.which, SDL_GetError());
-                    }
-                }
+                // if (GlobalJoystick == NULL) {
+                //     GlobalJoystick = SDL_OpenJoystick(event->jdevice.which);
+                //     if (!GlobalJoystick) {
+                //         SDL_Log("Failed to open joystick ID %u: %s", (unsigned int) event->jdevice.which, SDL_GetError());
+                //     }
+                // }
             } break;
         case SDL_EVENT_JOYSTICK_REMOVED:
             {
                 SDL_Log("SDL_EVENT_JOYSTICK_REMOVED");
-                if (GlobalJoystick && (SDL_GetJoystickID(GlobalJoystick) == event->jdevice.which)) {
-                    SDL_CloseJoystick(GlobalJoystick);
-                    GlobalJoystick = NULL;
-                }
+                // if (GlobalJoystick && (SDL_GetJoystickID(GlobalJoystick) == event->jdevice.which)) {
+                //     SDL_CloseJoystick(GlobalJoystick);
+                //     GlobalJoystick = NULL;
+                // }
             } break;
     }
 
     return should_quit;
+}
+
+static void SDLOpenGameControllers()
+{
+    int MaxJoysticks;
+    SDL_JoystickID *JoystickIDs = SDL_GetJoysticks(&MaxJoysticks);
+    int ControllerIndex = 0;
+    for(int JoystickIndex=0; JoystickIndex < MaxJoysticks; ++JoystickIndex)
+    {
+        SDL_JoystickID JoystickID = JoystickIDs[JoystickIndex];
+        if (!SDL_IsGamepad(JoystickID))
+        {
+            continue;
+        }
+        if (ControllerIndex >= MAX_CONTROLLERS)
+        {
+            break;
+        }
+        ControllerHandles[ControllerIndex] = SDL_OpenGamepad(JoystickID);
+        SDL_Joystick *JoystickHandle = SDL_GetGamepadJoystick(ControllerHandles[ControllerIndex]);
+        RumbleHandles[ControllerIndex] = SDL_OpenHapticFromJoystick(JoystickHandle);
+        if (SDL_InitHapticRumble(RumbleHandles[ControllerIndex]) != 0)
+        {
+            SDL_CloseHaptic(RumbleHandles[ControllerIndex]);
+            RumbleHandles[ControllerIndex] = 0;
+        }
+
+        ControllerIndex++;
+    }
+}
+
+static void
+SDLCloseGameControllers()
+{
+    for(int ControllerIndex = 0; ControllerIndex < MAX_CONTROLLERS; ++ControllerIndex)
+    {
+        if (ControllerHandles[ControllerIndex])
+        {
+            if (RumbleHandles[ControllerIndex])
+                SDL_CloseHaptic(RumbleHandles[ControllerIndex]);
+            SDL_CloseGamepad(ControllerHandles[ControllerIndex]);
+        }
+    }
 }
 
 int main() {
@@ -218,6 +252,8 @@ int main() {
         return 1;
     }
 
+    SDLOpenGameControllers();
+
     SDL_Window *Window;
     SDL_Renderer *Renderer;
 
@@ -225,19 +261,17 @@ int main() {
         sdl_window_dimension WindowDimension = SDLGetWindowDimension(Window);
 
         ResizeTexture(Renderer, WindowDimension.Width, WindowDimension.Height);
-        int XOffset = 0;
-        int YOffset = 0;
+
+        game_input Input[2] = {};
+        game_input *NewInput = &Input[0];
+        game_input *OldInput = &Input[1];
 
         // NOTE: Sound test
         sdl_sound_output SoundOutput = {};
         SoundOutput.SamplesPerSecond = 48000;
-        SoundOutput.ToneHz = 256;
-        SoundOutput.ToneVolume = 3000;
         SoundOutput.RunningSampleIndex = 0;
-        SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
         SoundOutput.BytesPerSample = sizeof(int16_t) * 2;
         SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond * SoundOutput.BytesPerSample;
-        SoundOutput.tSine = 0.0f;
         SoundOutput.LatencySampleCount = SoundOutput.SamplesPerSecond / 15;
         // Open our audio device:
         if(!SDLInitAudio(SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize)) {
@@ -262,16 +296,83 @@ int main() {
                 }
             }
 
-            if (GlobalJoystick) {
-                const float StickX = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTX)) / 32767.0f);
-                const float StickY = (((float) SDL_GetJoystickAxis(GlobalJoystick, SDL_GAMEPAD_AXIS_LEFTY)) / 32767.0f);
-                XOffset += StickX;
-                YOffset += StickY;
+            // Poll our controllers for input.
+            for (int ControllerIndex = 0; ControllerIndex < MAX_CONTROLLERS; ++ControllerIndex)
+            {
+                if(ControllerHandles[ControllerIndex] != 0 && SDL_GamepadConnected(ControllerHandles[ControllerIndex]))
+                {
+                    game_controller_input *OldController = &OldInput->Controllers[ControllerIndex];
+                    game_controller_input *NewController = &NewInput->Controllers[ControllerIndex];
 
-                SoundOutput.ToneHz = 512 + (int)(256.0f*(float)StickY);
-                SDL_Log("ToneHz: %d", SoundOutput.ToneHz);
-                SDL_Log("StickY: %f", StickY);
-                SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
+                    NewController->IsAnalog = true;
+                
+                    //TODO: Do something with the DPad, Start and Selected?
+                    bool Up = SDL_GetGamepadButton(ControllerHandles[ControllerIndex], SDL_GAMEPAD_BUTTON_DPAD_UP);
+                    bool Down = SDL_GetGamepadButton(ControllerHandles[ControllerIndex], SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+                    bool Left = SDL_GetGamepadButton(ControllerHandles[ControllerIndex], SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+                    bool Right = SDL_GetGamepadButton(ControllerHandles[ControllerIndex], SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+                    bool Start = SDL_GetGamepadButton(ControllerHandles[ControllerIndex], SDL_GAMEPAD_BUTTON_START);
+                    bool Back = SDL_GetGamepadButton(ControllerHandles[ControllerIndex], SDL_GAMEPAD_BUTTON_BACK);
+
+                    SDLProcessGameControllerButton(&(OldController->LeftShoulder),
+                           &(NewController->LeftShoulder),
+                           ControllerHandles[ControllerIndex],
+                           SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+
+                    SDLProcessGameControllerButton(&(OldController->RightShoulder),
+                           &(NewController->RightShoulder),
+                           ControllerHandles[ControllerIndex],
+                           SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+
+                    SDLProcessGameControllerButton(&(OldController->Down),
+                           &(NewController->Down),
+                           ControllerHandles[ControllerIndex],
+                           SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+
+                    SDLProcessGameControllerButton(&(OldController->Right),
+                           &(NewController->Right),
+                           ControllerHandles[ControllerIndex],
+                           SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+
+                    SDLProcessGameControllerButton(&(OldController->Left),
+                           &(NewController->Left),
+                           ControllerHandles[ControllerIndex],
+                           SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+
+                    SDLProcessGameControllerButton(&(OldController->Up),
+                           &(NewController->Up),
+                           ControllerHandles[ControllerIndex],
+                           SDL_GAMEPAD_BUTTON_DPAD_UP);
+
+                    int16_t StickX = SDL_GetGamepadAxis(ControllerHandles[ControllerIndex], SDL_GAMEPAD_AXIS_LEFTX);
+                    int16_t StickY = SDL_GetGamepadAxis(ControllerHandles[ControllerIndex], SDL_GAMEPAD_AXIS_LEFTY);
+
+                    if (StickX < 0)
+                    {
+                        NewController->EndX = StickX / -32768.0f;
+                    }
+                    else
+                    {
+                        NewController->EndX = StickX / -32767.0f;
+                    }
+
+                    NewController->MinX = NewController->MaxX = NewController->EndX;
+
+                    if (StickY < 0)
+                    {
+                        NewController->EndY = StickY / -32768.0f;
+                    }
+                    else
+                    {
+                        NewController->EndY = StickY / -32767.0f;
+                    }
+
+                    NewController->MinY = NewController->MaxY = NewController->EndY;
+                    }
+                else
+                {
+                    // TODO: This controller is not plugged in.
+                }
             }
 
             // Sound output test
@@ -294,13 +395,18 @@ int main() {
             SoundBuffer.SamplesPerSecond = SoundOutput.SamplesPerSecond;
             SoundBuffer.SampleCount = BytesToWrite / SoundOutput.BytesPerSample;
             SoundBuffer.Samples = Samples;
-            
+
             game_offscreen_buffer Buffer = {};
             Buffer.Memory = GlobalBackBuffer.Memory;
             Buffer.Width = GlobalBackBuffer.Width; 
             Buffer.Height = GlobalBackBuffer.Height;
             Buffer.Pitch = GlobalBackBuffer.Pitch; 
-            GameUpdateAndRender(&Buffer, XOffset, YOffset, &SoundBuffer, SoundOutput.ToneHz);
+
+            GameUpdateAndRender(NewInput, &Buffer, &SoundBuffer);
+
+            game_input *Temp = NewInput;
+            NewInput = OldInput;
+            OldInput = Temp;
 
             SDLFillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite, &SoundBuffer); 
 
@@ -318,13 +424,14 @@ int main() {
             float MSPerFrame = (((1000.0f * (float)CounterElapsed) / (float)PerfCountFrequency));
             float FPS = (float)PerfCountFrequency / (float)CounterElapsed;
 
-            SDL_Log("%.02f ms/f, %.02ff/s\n", MSPerFrame, FPS);
+            //SDL_Log("%.02f ms/f, %.02ff/s\n", MSPerFrame, FPS);
             LastCounter = EndCounter;
         }
 
         SDL_DestroyRenderer(Renderer);
         SDL_DestroyWindow(Window);
 
+        SDLCloseGameControllers();
         SDL_Quit();
     } else {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
