@@ -14,13 +14,8 @@
 #include <sys/mman.h>
 #include <math.h>
 
-struct sdl_offscreen_buffer {
-    // Pixels are always 32-bits wide, Memory order BB GG RR XX
-    void *Memory;
-    int Width;
-    int Height;
-    int Pitch;
-};
+#include "everyday.h"
+#include "everyday.cpp"
 
 struct sdl_window_dimension {
     int Width;
@@ -51,7 +46,7 @@ struct sdl_sound_output
 };
 
 static bool GlobalRunning;
-static sdl_offscreen_buffer GlobalBackBuffer;
+static game_offscreen_buffer GlobalBackBuffer;
 static SDL_Joystick *GlobalJoystick;
 static SDL_AudioStream *GlobalStream;
 
@@ -61,21 +56,6 @@ sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window) {
     SDL_GetWindowSize(Window, &Result.Width, &Result.Height);
 
     return Result;
-}
-
-static void RenderGradient(sdl_offscreen_buffer Buffer, int BlueOffset, int GreenOffset) {
-    uint8_t *Row = (uint8_t *)Buffer.Memory;
-
-    for (int Y = 0; Y < Buffer.Height; ++Y) {
-        uint32_t *Pixel = (uint32_t *)Row;
-        for(int X = 0; X < Buffer.Width; ++X) {
-            uint8_t Blue = (X + BlueOffset);
-            uint8_t Green = (Y + GreenOffset);
-
-            *Pixel++ = ((Green << 8) | Blue);
-        }
-        Row += Buffer.Pitch;
-    }
 }
 
 static void DisplayBufferInWindow(SDL_Renderer *Renderer) {
@@ -304,7 +284,13 @@ int main() {
                 SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond / SoundOutput.ToneHz;
             }
 
-            RenderGradient(GlobalBackBuffer, XOffset, YOffset);
+
+            game_offscreen_buffer Buffer = {};
+            Buffer.Memory = GlobalBackBuffer.Memory;
+            Buffer.Width = GlobalBackBuffer.Width; 
+            Buffer.Height = GlobalBackBuffer.Height;
+            Buffer.Pitch = GlobalBackBuffer.Pitch; 
+            GameUpdateAndRender(&Buffer, XOffset, YOffset);
 
             // Sound output test
             int ByteToLock = (SoundOutput.RunningSampleIndex*SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
