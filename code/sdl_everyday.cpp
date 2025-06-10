@@ -280,6 +280,31 @@ int main() {
         }
         int16_t *Samples = (int16_t *)calloc(SoundOutput.SamplesPerSecond, SoundOutput.BytesPerSample);
 
+
+#if HANDMADE_INTERNAL
+        // TODO: This will fail gently on 32-bit at the moment, but we should probably fix it.
+        void *BaseAddress = (void *)Terabytes(2);
+#else
+        void *BaseAddress = (void *)(0);
+#endif
+
+        game_memory GameMemory = {};
+        GameMemory.PersistentStorageSize = Megabytes(64);
+        GameMemory.TransientStorageSize = Gigabytes(4);
+
+        uint64_t TotalStorageSize = GameMemory.PersistentStorageSize + GameMemory.TransientStorageSize;
+
+        GameMemory.PersistentStorage = mmap(BaseAddress, TotalStorageSize,
+                                           PROT_READ | PROT_WRITE,
+                                           MAP_ANON | MAP_PRIVATE,
+                                           -1, 0);
+
+        Assert(GameMemory.PersistentStorage);
+
+        GameMemory.TransientStorage = (uint8_t*)(GameMemory.PersistentStorage) + GameMemory.PersistentStorageSize;
+
+
+
         bool SoundEnabled = false;
 
         bool Running = true;
@@ -402,7 +427,7 @@ int main() {
             Buffer.Height = GlobalBackBuffer.Height;
             Buffer.Pitch = GlobalBackBuffer.Pitch; 
 
-            GameUpdateAndRender(NewInput, &Buffer, &SoundBuffer);
+            GameUpdateAndRender(&GameMemory, NewInput, &Buffer, &SoundBuffer);
 
             game_input *Temp = NewInput;
             NewInput = OldInput;

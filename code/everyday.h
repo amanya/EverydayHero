@@ -5,7 +5,33 @@
 
 #define ArrayCount(Array) (sizeof(Array) / sizeof((Array)[0]))
 
+#define Kilobytes(Value) ((Value)*1024LL)
+#define Megabytes(Value) (Kilobytes(Value)*1024LL)
+#define Gigabytes(Value) (Megabytes(Value)*1024LL)
+#define Terabytes(Value) (Gigabytes(Value)*1024LL)
+
+#if HANDMADE_SLOW
+#define Assert(Expression) if(!(Expression)) {*(int *)0 = 0;}
+#else
+#define Assert(Expression)
+#endif
+
+
 typedef int32_t bool32;
+
+struct game_state {
+    int BlueOffset;
+    int GreenOffset;
+    int ToneHz;
+};
+
+struct game_memory {
+    bool32 IsInitialized;
+    uint64_t PersistentStorageSize;
+    void *PersistentStorage;
+    uint64_t TransientStorageSize;
+    void *TransientStorage;
+};
 
 struct game_offscreen_buffer {
     void *Memory;
@@ -64,7 +90,7 @@ struct game_input
 };
 
 
-static void GameUpdateAndRender(game_input *Input, game_offscreen_buffer *Buffer,
+static void GameUpdateAndRender(game_memory *GameMemory, game_input *Input, game_offscreen_buffer *Buffer,
                                 game_sound_output_buffer *SoundBuffer);
 
 #define EVERYDAY_H

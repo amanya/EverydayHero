@@ -40,18 +40,19 @@ static void GameOutputSound(game_sound_output_buffer *SoundBuffer, int ToneHz)
     }
 }
 
-static void GameUpdateAndRender(game_input *Input, game_offscreen_buffer *Buffer,
+static void GameUpdateAndRender(game_memory *Memory, game_input *Input, game_offscreen_buffer *Buffer,
                                 game_sound_output_buffer *SoundBuffer) {
-    static int BlueOffset = 0;
-    static int GreenOffset = 0;
-    static int ToneHz = 256;
+
+    Assert(sizeof(game_state) <= Memory->PermanentStorageSize);
+    
+    game_state *GameState = (game_state *)Memory->PersistentStorage;
 
     game_controller_input *Input0 = &Input->Controllers[0];    
     if(Input0->IsAnalog)
     {
         // NOTE(casey): Use analog movement tuning
-        BlueOffset += (int)4.0f*(Input0->EndX);
-        ToneHz = 256 + (int)(128.0f*(Input0->EndY));
+        GameState->BlueOffset += (int)4.0f*(Input0->EndX);
+        GameState->ToneHz = 256 + (int)(128.0f*(Input0->EndY));
     }
     else
     {
@@ -62,8 +63,8 @@ static void GameUpdateAndRender(game_input *Input, game_offscreen_buffer *Buffer
     // Input.AButtonHalfTransitionCount;
     if(Input0->Down.EndedDown)
     {
-        GreenOffset += 1;
+        GameState->GreenOffset += 1;
     }
-    RenderGradient(Buffer, BlueOffset, GreenOffset);
-    GameOutputSound(SoundBuffer, ToneHz);
+    RenderGradient(Buffer, GameState->BlueOffset, GameState->GreenOffset);
+    GameOutputSound(SoundBuffer, GameState->ToneHz);
 }
