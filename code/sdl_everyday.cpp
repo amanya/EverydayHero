@@ -281,7 +281,7 @@ int main() {
         int16_t *Samples = (int16_t *)calloc(SoundOutput.SamplesPerSecond, SoundOutput.BytesPerSample);
 
 
-#if HANDMADE_INTERNAL
+#if EVERYDAY_INTERNAL
         // TODO: This will fail gently on 32-bit at the moment, but we should probably fix it.
         void *BaseAddress = (void *)Terabytes(2);
 #else

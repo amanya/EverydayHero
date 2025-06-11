@@ -1,4 +1,4 @@
-#ifndef SDL_HANDMADE_H 
+#ifndef SDL_EVERYDAY_H
 
 #include "SDL3/SDL.h"
 
@@ -37,5 +37,5 @@ struct sdl_sound_output
     int LatencySampleCount;
 };
 
-#define SDL_HANDMADE_H
+#define SDL_EVERYDAY_H
 #endif
