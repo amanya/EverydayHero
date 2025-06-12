@@ -1,7 +1,5 @@
 #ifndef SDL_EVERYDAY_H
 
-#include "SDL3/SDL.h"
-
 #define MAX_CONTROLLERS 4
 
 struct sdl_offscreen_buffer

@@ -1,2 +1,5 @@
 CompileFlags:
-  Add: -I/opt/homebrew/Cellar/sdl3/3.2.14/include/
+  Add: 
+  - -I/opt/homebrew/Cellar/sdl3/3.2.14/include/
+  - -DEVERYDAY_INTERNAL=1
+  - -DEVERYDAY_SLOW=1

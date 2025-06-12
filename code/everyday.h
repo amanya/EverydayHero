@@ -1,5 +1,4 @@
 #ifndef EVERYDAY_H
-#include <stdlib.h>
 
 #define Pi32 3.14159265359f
 
@@ -16,8 +15,25 @@
 #define Assert(Expression)
 #endif
 
-
 typedef int32_t bool32;
+
+inline uint32_t SafeTruncateUInt64(uint64_t Value)
+{
+    Assert(Value <= 0xFFFFFFFF);
+    uint32_t Result = (uint32_t)Value;
+    return(Result);
+}
+
+#if EVERYDAY_INTERNAL
+struct debug_read_file_result
+{
+    uint32_t ContentsSize;
+    void *Contents;
+};
+static debug_read_file_result DEBUGPlatformReadEntireFile(char *Filename);
+static void DEBUGPlatformFreeFileMemory(void *Memory);
+static bool32 DEBUGPlatformWriteEntireFile(char *Filename, uint32_t MemorySize, void *Memory);
+#endif
 
 struct game_state {
     int BlueOffset;

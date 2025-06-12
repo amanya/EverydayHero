@@ -11,13 +11,18 @@
 #include "SDL3/SDL_video.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
-#include <cstdint>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include "everyday.h"
 #include "everyday.cpp"
 #include "sdl_everyday.h"
+
+#include <cstring>
 
 #define MAX_CONTROLLERS 4
 SDL_Gamepad *ControllerHandles[MAX_CONTROLLERS];
@@ -29,6 +34,87 @@ static bool GlobalRunning;
 static game_offscreen_buffer GlobalBackBuffer;
 static SDL_Joystick *GlobalJoystick;
 static SDL_AudioStream *GlobalStream;
+
+static debug_read_file_result DEBUGPlatformReadEntireFile(char *Filename)
+{
+    debug_read_file_result Result = {};
+    
+    int FileHandle = open(Filename, O_RDONLY);
+    if(FileHandle == -1)
+    {
+        return Result;
+    }
+
+    struct stat FileStatus;
+    if(fstat(FileHandle, &FileStatus) == -1)
+    {
+        close(FileHandle);
+        return Result;
+    }
+    Result.ContentsSize = SafeTruncateUInt64(FileStatus.st_size);
+
+    Result.Contents = malloc(Result.ContentsSize);
+    if(!Result.Contents)
+    {
+        close(FileHandle);
+        Result.ContentsSize = 0;
+        return Result;
+    }
+
+
+    uint32_t BytesToRead = Result.ContentsSize;
+    uint8_t *NextByteLocation = (uint8_t*)Result.Contents;
+    while (BytesToRead)
+    {
+        uint32_t BytesRead = read(FileHandle, NextByteLocation, BytesToRead);
+        if (BytesRead == -1)
+        {
+            free(Result.Contents);
+            Result.Contents = 0;
+            Result.ContentsSize = 0;
+            close(FileHandle);
+            return Result;
+        }
+        BytesToRead -= BytesRead;
+        NextByteLocation += BytesRead;
+    }
+
+    close(FileHandle);
+    return(Result);
+}
+
+static void
+DEBUGPlatformFreeFileMemory(void *Memory)
+{
+    free(Memory);
+}
+
+static bool32
+DEBUGPlatformWriteEntireFile(char *Filename, uint32_t MemorySize, void *Memory)
+{
+    int FileHandle = open(Filename, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+    if (!FileHandle)
+        return false;
+
+    uint32_t BytesToWrite = MemorySize;
+    uint8_t *NextByteLocation = (uint8_t*)Memory;
+    while (BytesToWrite)
+    {
+        uint32_t BytesWritten = write(FileHandle, NextByteLocation, BytesToWrite);
+        if (BytesWritten == -1)
+        {
+            close(FileHandle);
+            return false;
+        }
+        BytesToWrite -= BytesWritten;
+        NextByteLocation += BytesWritten;
+    }
+
+    close(FileHandle);
+
+    return true;
+}
 
 sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window) {
     sdl_window_dimension Result;
